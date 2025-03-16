@@ -1,0 +1,33 @@
+/*
+ * Arduino MKR Zero overlay for LCD keypad project
+ */
+
+&zephyr_udc0 {
+	cdc_acm_uart0 {
+		compatible = "zephyr,cdc-acm-uart";
+		label = "Zephyr USB CDC-ACM";
+	};
+};
+
+/ {
+	zephyr,user {
+		/* Reference the ADC channel for keypad reading */
+		io-channels = <&adc 0>;
+	};
+};
+
+&adc {
+	#address-cells = <1>;
+	#size-cells = <0>;
+	status = "okay";
+
+	/* ADC channel configuration for keypad */
+	channel@0 {
+		reg = <0>;
+		zephyr,gain = "ADC_GAIN_1";         /* Use gain 1 for SAM0 */
+		zephyr,reference = "ADC_REF_VDD_1_2";
+		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
+		zephyr,input-positive = <0>;        /* AIN0 on PA02 (A0) pin */
+		zephyr,resolution = <12>;           /* 12-bit resolution */
+	};
+};
