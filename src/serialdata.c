@@ -120,10 +120,9 @@ void handle_song_cmd(lcd_state_t *lcd, uint8_t *command) {
 
     lcd_set_cursor(lcd, 0, 0);
     char printStr[17];
-    for (uint8_t i = 2; i < command[1]+2; i++) {
+    for (uint8_t i = 2; i < command[1]+3; i++) {
         sprintf(printStr + strlen(printStr), "%c", command[i]);
     }
-    sprintf(printStr + strlen(printStr), "%02x", command[1]+2);
     LOG_INF("Received song: %s", printStr);
     lcd_print(lcd, printStr);
 }

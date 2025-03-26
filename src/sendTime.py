@@ -22,7 +22,6 @@ class Displays(IntEnum):
 
 def calculate_checksum(data):
     """Calculate XOR checksum of a byte array"""
-    print(f"Data is of type {type(data[0])}")
     checksum = 0
     for byte in data:
         checksum ^= byte
@@ -30,7 +29,6 @@ def calculate_checksum(data):
 
 def verify_checksum(data):
     given_checksum = data[-1]
-    print(f"Data is of type {type(data[0])}")
     calc_checksum = calculate_checksum(data)
 
     return given_checksum == calc_checksum
@@ -82,7 +80,6 @@ def send_current_date(ser):
     print(f"Bytes: {[hex(b) for b in message]}")
 
 def process_command(command_data):
-    print(f"Data is of type {type(command_data[0])}")
     if not verify_checksum(command_data[0:-1]): return
     cmd = Commands(command_data[0])
     match cmd:
@@ -92,13 +89,12 @@ def process_command(command_data):
             return Displays(command_data[2])
 
 def send_not_implemented_msg(disp, ser):
-    msg = "Not ready: "
+    msg = "Not Done"
     data = [int(ord(c)) for c in msg]
-    data.append(int(disp))
 
     message = send_command(Commands.SONG, data, ser)
 
-    song_str = f"{msg}{hex(disp)}"
+    song_str = f"{msg}"
     print(f"Sent song: {song_str}")
     print(f"Bytes: {[hex(b) for b in message]}")
 
@@ -107,7 +103,6 @@ def write_serial(ser, q):
     while True:
         if not q.empty():
             cmd = q.get()
-            print(f"Data is of type {type(cmd[0])}")
             disp = process_command(cmd)
             q.task_done()
         match disp:
@@ -138,7 +133,6 @@ def main():
                 data_in = []
                 while ser.in_waiting > 0:
                     data_in.append(int(ser.read(1).hex()))
-
                 print(f"Received data: {data_in}")
                 q.put(data_in)
                 q.join()
