@@ -16,6 +16,11 @@
 #include <zephyr/drivers/adc.h>
 #include <string.h>
 #include "drivers/lcd/lcd.h"
+#include "serialdata.h"
+
+#ifndef DEBUGMODE
+#define DEBUGMODE
+#endif
 
 LOG_MODULE_REGISTER(app, LOG_LEVEL_INF);
 
@@ -43,7 +48,10 @@ RING_BUF_DECLARE(cdc_rx_rb, RING_BUF_SIZE);
 /* Device structures */
 
 const struct device *const cdc_dev = DEVICE_DT_GET_ONE(zephyr_cdc_acm_uart);
+
+#ifdef DEBUGMODE
 const struct device *const uart_dev = DEVICE_DT_GET(DT_NODELABEL(sercom5));
+#endif
 
 /* ADC channel from devicetree */
 static const struct adc_dt_spec adc_channel = ADC_DT_SPEC_GET(DT_PATH(zephyr_user));
@@ -203,9 +211,9 @@ static lcd_button_t debounce_button(int16_t adc_value, lcd_button_t *last_stable
 
 /* Sends a command to PC telling it a different button has been pressed */
 static void send_btn_command(const char button) {
-    uart_poll_out(uart_dev, 0x01);
-    uart_poll_out(uart_dev, 0x01);
-    uart_poll_out(uart_dev, button);
+    uart_poll_out(cdc_dev, 0x01);
+    uart_poll_out(cdc_dev, 0x01);
+    uart_poll_out(cdc_dev, button);
 }
 
 /* Get button name as string */
@@ -222,6 +230,18 @@ static const char button_name(lcd_button_t button)
     }
 }
 
+uint8_t btn_map(lcd_button_t button) {
+    switch (button) {
+        case BUTTON_RIGHT: return 0x00;
+        case BUTTON_UP:    return 0x01;
+        case BUTTON_DOWN:  return 0x02;
+        case BUTTON_LEFT:  return 0x03;
+        case BUTTON_SELECT: return 0x04;
+        default: return 0x00;
+    }
+}
+
+
 int main(void)
 {
     uint8_t byte;
@@ -231,13 +251,12 @@ int main(void)
     lcd_button_t stable_button = BUTTON_NONE;  // For debouncing
     bool diagnostic_mode = false;  // Set to true to show raw ADC values
 
-
-    /* Initialize hardware UART (SERCOM5) */
+#ifdef DEBUGMODE
     if (!device_is_ready(uart_dev)) {
         LOG_ERR("UART device (SERCOM5) not ready");
         return -1;
     }
-
+#endif
     /* Initialize USB CDC ACM - proper device tree approach */
     if (!device_is_ready(cdc_dev)) {
         LOG_ERR("CDC ACM device not ready");
@@ -308,9 +327,8 @@ int main(void)
         }
 
         /* If there's data in the ring buffer, process it */
-        if (ring_buf_get(&cdc_rx_rb, &byte, 1) == 1) {
-            /* Echo back to CDC ACM */
-            uart_poll_out(uart_dev, byte);
+        if (ring_buf_get(&cdc_rx_rb, &byte, 1)) {
+            parse_command_from_ring_buf(&cdc_rx_rb, &lcd, &byte);
         }
 
 
@@ -336,31 +354,42 @@ int main(void)
 
             /* Only log if button changed to reduce serial output */
             if (current_button != last_button) {
-                LOG_INF("ADC: %d, Button: %s", raw_value, button_name(current_button));
+                LOG_INF("ADC: %d, Button: %c", raw_value, button_name(current_button));
                 last_button = current_button;
             }
         }
         /* Normal mode - only update when button changes */
         else if (current_button != last_button && current_button != BUTTON_NONE) {
             /* Clear the second line */
-            lcd_clear(&lcd);
-            lcd_print(&lcd, "                ");
-
-            /* Print the button name */
-            lcd_set_cursor(&lcd, 0, 0);
-            lcd_print(&lcd, "Key: ");
-            lcd_write_char(&lcd, button_name(current_button));
-
-            /* Print the raw ADC value for debugging */
-            lcd_set_cursor(&lcd, 0, 1);
-            char adc_str[16];
-            snprintf(adc_str, sizeof(adc_str), "ADC:%d", raw_value);
-            lcd_print(&lcd, adc_str);
+            // lcd_clear(&lcd);
+            // lcd_print(&lcd, "                ");
+            //
+            // /* Print the button name */
+            // lcd_set_cursor(&lcd, 0, 0);
+            // lcd_print(&lcd, "Key: ");
+            // lcd_write_char(&lcd, button_name(current_button));
+            //
+            // /* Print the raw ADC value for debugging */
+            // lcd_set_cursor(&lcd, 0, 1);
+            // char adc_str[16];
+            // snprintf(adc_str, sizeof(adc_str), "ADC:%d", raw_value);
+            // lcd_print(&lcd, adc_str);
 
             last_button = current_button;
 
             /* Log the button press */
-            send_btn_command(button_name(current_button));
+            uint8_t cmd[4] = {
+                0x01,
+                0x01,
+                btn_map(current_button),
+                0x00
+            };
+
+            LOG_INF("Sending command");
+            LOG_INF("current button is: %d", cmd[2]);
+
+            lcd_clear(&lcd);
+            send_message(cdc_dev, cmd);
             // LOG_INF("Button: %s, ADC: %d", button_name(current_button), raw_value);
         }
 

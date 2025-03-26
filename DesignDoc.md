@@ -25,10 +25,7 @@ The following information will be available for display:
 12. Possibly more in the future
 
 ### Connection method:
-The Arduino and the host PC will be attached together using two connections:
-
-1. Data will be passed from the host PC to the Arduino with a UART connection over CDC-ACM
-2. Data will be passed from the Arduino to the host PC over a USB to TTL UART adapter connected to the TX and RX pins on the Arduino
+The Arduino and the host PC will be attached together using a USB connection with CDC-ACM. Communications will follow UART protocol.
 
 ### Data schema
 Communication between the PC and Arduino will have a standard schema for the data.
@@ -43,18 +40,18 @@ Checksums will be handled by a simple XOR operation over all preceding bytes.
 Commands will be as follows:
 
 1. 0x00 - This is the "ready" command, and will initialize the program. When the arduino is first turned on, it will send this command at half second intervals until it receives the command back from the host PC. This will always be sent as `00 00`
-2. 0x01 - This is the command sent from the Arduino to the PC to tell it that the display page has changed. There are five buttons the LCD keypad that each represent a different display page. The byte sent for each button is the hex representation of the first character of its name in ASCII, so as follows:
-   > RIGHT -> 0x52
+2. 0x01 - This is the command sent from the Arduino to the PC to tell it that the display page has changed. There are five buttons the LCD keypad that each represent a different display page, as follows:
+   > RIGHT -> 0x00
    > 
-   > UP -> 0x55
+   > UP -> 0x01
    > 
-   > DOWN -> 0x44
+   > DOWN -> 0x02
    > 
-   > LEFT -> 0x4C
+   > LEFT -> 0x03
    > 
-   > SELECT -> 0x53
+   > SELECT -> 0x04
    
-   So a sample command from the Arduino to the PC to tell it to change the display to the page associated with the DOWN button would be `01 01 44 44`
+   So a sample command from the Arduino to the PC to tell it to change the display to the page associated with the DOWN button would be `01 01 02 02`
    This will be the only data sent from the Arduino to the PC
 3. 0x02 - This byte represents that the current date is being sent. Date format will be MMDDYYYY. So since today's date is 03/14/2025, the data sent from the PC would be `02 04 03 0E 07 E9 E5`
 4. 0x03 - This byte represents that the current time is being sent. Time format will be HHMMA where A represents if it is AM (00) or PM (01). If the time is 8:28pm, the data sent will be `03 03 08 1C 01 15`

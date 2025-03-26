@@ -248,7 +248,7 @@ void lcd_backlight(lcd_state_t *lcd, bool on)
 }
 
 /* Set cursor position */
-void lcd_set_cursor(lcd_state_t *lcd, uint8_t col, uint8_t row)
+void lcd_set_cursor(lcd_state_t *lcd, uint8_t row, uint8_t col)
 {
     if (row >= lcd->config.rows) {
         row = lcd->config.rows - 1;

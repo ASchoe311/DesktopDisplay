@@ -125,7 +125,7 @@ void lcd_blink(lcd_state_t *lcd, bool on);
 void lcd_backlight(lcd_state_t *lcd, bool on);
 
 /* Set cursor position */
-void lcd_set_cursor(lcd_state_t *lcd, uint8_t col, uint8_t row);
+void lcd_set_cursor(lcd_state_t *lcd, uint8_t row, uint8_t col);
 
 /* Write a string to the LCD */
 void lcd_print(lcd_state_t *lcd, const char *str);
