@@ -28,6 +28,6 @@
 		zephyr,reference = "ADC_REF_VDD_1_2";
 		zephyr,acquisition-time = <ADC_ACQ_TIME_DEFAULT>;
 		zephyr,input-positive = <0>;        /* AIN0 on PA02 (A0) pin */
-		zephyr,resolution = <12>;           /* 12-bit resolution */
+		zephyr,resolution = <10>;           /* 12-bit resolution */
 	};
 };

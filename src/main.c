@@ -34,12 +34,12 @@ static lcd_state_t lcd;
 RING_BUF_DECLARE(cdc_rx_rb, RING_BUF_SIZE);
 
 /* Button value ranges based on observed values with pull-down resistor */
-#define BUTTON_RIGHT_MAX    150
-#define BUTTON_UP_MAX       650
-#define BUTTON_DOWN_MAX     750
-#define BUTTON_LEFT_MAX     800
-#define BUTTON_SELECT_MAX   835
-#define BUTTON_NONE_MAX     4095    // Max value for 12-bit resolution
+#define BUTTON_RIGHT_MAX    200
+#define BUTTON_UP_MAX       400
+#define BUTTON_DOWN_MAX     550
+#define BUTTON_LEFT_MAX     650
+#define BUTTON_SELECT_MAX   745
+#define BUTTON_NONE_MAX     1023   // Max value for 12-bit resolution
 
 /* Button debouncing parameters */
 #define DEBOUNCE_TIME_MS    50      // Time in ms required for stable button reading
@@ -117,9 +117,14 @@ static int init_lcd(void)
         /* Show a welcome message */
         lcd_clear(&lcd);
         lcd_print(&lcd, "LCD Initialized");
-        lcd_set_cursor(&lcd, 0, 1);
-        lcd_print(&lcd, "Press any key...");
+        lcd_set_cursor(&lcd, 1, 0);
     }
+
+    lcd_create_char(&lcd, 0, temperature_char);
+    lcd_create_char(&lcd, 1, memory_char);
+    lcd_create_char(&lcd, 2, cpu_char);
+    lcd_create_char(&lcd, 3, fan_char1);
+    lcd_create_char(&lcd, 4, fan_char2);
 
     return ret;
 }
@@ -145,7 +150,7 @@ static void cdc_cb(const struct device *dev, void *user_data)
 }
 
 /* Identify which button is pressed based on ADC value */
-static lcd_button_t identify_button(int16_t adc_value)
+static lcd_button_t identify_button(int32_t adc_value)
 {
     if (adc_value <= BUTTON_RIGHT_MAX) {
         return BUTTON_RIGHT;
@@ -163,7 +168,7 @@ static lcd_button_t identify_button(int16_t adc_value)
 }
 
 /* Advanced debounced button detection function */
-static lcd_button_t debounce_button(int16_t adc_value, lcd_button_t *last_stable_button)
+static lcd_button_t debounce_button(int32_t adc_value, lcd_button_t *last_stable_button)
 {
     static lcd_button_t current_button = BUTTON_NONE;
     static lcd_button_t last_button = BUTTON_NONE;
@@ -207,27 +212,6 @@ static lcd_button_t debounce_button(int16_t adc_value, lcd_button_t *last_stable
     }
 
     return *last_stable_button;
-}
-
-/* Sends a command to PC telling it a different button has been pressed */
-static void send_btn_command(const char button) {
-    uart_poll_out(cdc_dev, 0x01);
-    uart_poll_out(cdc_dev, 0x01);
-    uart_poll_out(cdc_dev, button);
-}
-
-/* Get button name as string */
-static const char button_name(lcd_button_t button)
-{
-    switch (button) {
-        case BUTTON_RIGHT:  return 'R';
-        case BUTTON_UP:     return 'U';
-        case BUTTON_DOWN:   return 'D';
-        case BUTTON_LEFT:   return 'L';
-        case BUTTON_SELECT: return 'S';
-        case BUTTON_NONE:   return 'N';
-        default:            return 'U';
-    }
 }
 
 uint8_t btn_map(lcd_button_t button) {
@@ -312,15 +296,50 @@ int main(void)
     k_msleep(1000);  // Show initial message for 1 second
 
     lcd_clear(&lcd);
-    LOG_INF("Demos started");
-    LOG_INF("Press buttons to see values");
-    LOG_INF("Send serial data to see it echoed");
+    lcd_home(&lcd);
+    lcd_print(&lcd, "Device Ready");
+    lcd_set_cursor(&lcd, 1, 0);
+    lcd_print(&lcd, "Awaiting Host PC");
+    LOG_INF("All devices initialized");
+    LOG_INF("Awaiting host PC initialization command");
 
+    // Await init command
+    while (1) {
+        LOG_INF("Waiting for command");
+        if (ring_buf_get(&cdc_rx_rb, &byte, 1)) {
+            LOG_INF("Buffer has bytes");
+            if (parse_command_from_ring_buf(&cdc_rx_rb, &lcd, &byte)) {
+                LOG_INF("Got ready command from host PC");
+                lcd_clear(&lcd);
+                lcd_home(&lcd);
+                lcd_print(&lcd, "Host Ready");
+                lcd_set_cursor(&lcd, 1, 0);
+                lcd_print(&lcd, "Sending ready");
+                LOG_INF("Sending ready message back to host");
+                const uint8_t readyCmd[2] = {0x00, 0x00};
+                for (size_t i = 0; i < 2; i++) {
+                    uart_poll_out(cdc_dev, readyCmd[i]);
+                }
+                uint8_t cmd[4] = {
+                    0x01,
+                    0x01,
+                    0x00,
+                    0x00
+                };
+                send_message(cdc_dev, cmd);
+                break;
+            }
+        }
+        k_msleep(500);
+    }
+
+    lcd_clear(&lcd);
     /* Main loop */
     while (1) {
         /* Read ADC value */
-        ret = adc_read(adc_channel.dev, &sequence);
-        if (ret < 0) {
+        (void)adc_sequence_init_dt(&adc_channel, &sequence);
+        int err = adc_read_dt(&adc_channel, &sequence);
+        if (err < 0) {
             LOG_ERR("Could not read ADC (%d)", ret);
             k_msleep(100);
             continue;
@@ -333,33 +352,13 @@ int main(void)
 
 
         /* Get raw ADC value */
-        int16_t raw_value = adc_buf;
-
+        int32_t raw_value;
+        raw_value = (int32_t)adc_buf;
         /* Get button state with debouncing */
         current_button = debounce_button(raw_value, &stable_button);
 
-        /* In diagnostic mode, always update the display with raw ADC values */
-        if (diagnostic_mode) {
-            /* First line: Current ADC value */
-            lcd_set_cursor(&lcd, 0, 0);
-            char line1[17]; // 16 chars + null terminator
-            snprintf(line1, sizeof(line1), "ADC: %d", raw_value);
-            lcd_print(&lcd, line1);
 
-            /* Second line: Button name */
-            lcd_set_cursor(&lcd, 0, 1);
-            char line2[17];
-            snprintf(line2, sizeof(line2), "Key: %c", button_name(current_button));
-            lcd_print(&lcd, line2);
-
-            /* Only log if button changed to reduce serial output */
-            if (current_button != last_button) {
-                LOG_INF("ADC: %d, Button: %c", raw_value, button_name(current_button));
-                last_button = current_button;
-            }
-        }
-        /* Normal mode - only update when button changes */
-        else if (current_button != last_button && current_button != BUTTON_NONE) {
+        if (current_button != last_button && current_button != BUTTON_NONE) {
             /* Clear the second line */
             // lcd_clear(&lcd);
             // lcd_print(&lcd, "                ");
@@ -388,8 +387,9 @@ int main(void)
             LOG_INF("Sending command");
             LOG_INF("current button is: %d", cmd[2]);
 
-            lcd_clear(&lcd);
             send_message(cdc_dev, cmd);
+            lcd_clear(&lcd);
+            ring_buf_reset(&cdc_rx_rb);
             // LOG_INF("Button: %s, ADC: %d", button_name(current_button), raw_value);
         }
 

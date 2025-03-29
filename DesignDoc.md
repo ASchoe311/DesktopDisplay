@@ -57,21 +57,22 @@ Commands will be as follows:
 4. 0x03 - This byte represents that the current time is being sent. Time format will be HHMMA where A represents if it is AM (00) or PM (01). If the time is 8:28pm, the data sent will be `03 03 08 1C 01 15`
 5. 0x04 - This byte represents that the current CPU temperature is being sent. Temperatures are whole numbers in Celsius, represented as one byte. If the temperature being sent is 67C, the data will be `04 01 43 46`
 6. 0x05 - This byte represents that the current CPU usage is being sent. Usages are whole numbers as a percent, represented as one byte. If the usage is 35%, the data will `05 01 23 27`
-7. 0x06 - This byte represents that the current CPU fan speed is being sent. Fan speeds are whole numbers as a percent of maximum speed. If the CPU fan is at 25%, the data sent will be `06 01 19 1E`
+7. 0x06 - This byte represents that the current CPU fan speed is being sent. Fan speeds are whole numbers as RPM. If the CPU fan is at 900RPM, the data sent will be `06 02 03 84 83`
 8. 0x07 - This byte represents GPU temperature. Same format as 0x04
 9. 0x08 - This byte represents GPU usage. Same format as 0x05
 10. 0x09 - This byte represents GPU fan speed. Same format as 0x06
 11. 0x0A - This byte represents that the current memory usage is being sent. Memory usage is sent as a percentage of available memory used. If memory usage is at 39%, the data sent will be `0A 01 27 2C`
 12.  0x0B - This byte represents that the current playing audio title is being sent. If the current song is "Too Sweet", the data will be `0B 09 54 6F 6F 20 53 77 65 65 74 26`
+13. 0x0C - This byte represents the current VRAM usage is being sent. VRAM usage is sent as a percentage of available VRAM used.
 
 ### Display Pages
 The display will have 5 different "pages" of data to display, with each page being associated with a specific button.
 
-1. SELECT -> This page will be the default, and will simply contain the date and time in the middle of the display with date on top.
-2. LEFT -> This page will be dedicated to CPU and memory usage information. It will consist of a custom icons for each data point, CPU and memory usage on top with temperature and fan speed on bottom
-3. UP -> This page will be dedicated to GPU information. GPU usage will be on top, GPU temperature and fan speed will be on bottom
-4. DOWN -> This page will be for displaying the currently playing song.
-5. RIGHT -> This page will be for displaying readings from the temperature sensor
+1. RIGHT -> This page will be the default, and will simply contain the date and time in the middle of the display with date on top.
+2. UP -> This page will be dedicated to CPU and memory usage information. It will consist of a custom icons for each data point, CPU temperature and usage on top with memory use and fan speed on bottom
+3. DOWN -> This page will be dedicated to GPU information. GPU usage and temperature will be on top, VRAM usage and fan speed will be on bottom
+4. LEFT -> This page will be for displaying the currently playing song.
+5. SELECT -> This page will be for displaying readings from the temperature sensor
 
 ### Handling Communication Failures
 Any received message will be checked against the checksum it is sent with. If the checksum does not match the message, the message will be discarded.

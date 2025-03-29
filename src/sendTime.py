@@ -5,13 +5,23 @@ import serial
 import time
 from datetime import datetime
 from enum import IntEnum
+import psutil
+import math
+import pyamdgpuinfo
 
 class Commands(IntEnum):
     READY = 0x00
     DISPLAY = 0x01
     DATE = 0x02
     TIME = 0x03
+    CPU_TEMP = 0x04
+    CPU_USE = 0x05
+    GPU_TEMP = 0x07
+    GPU_USE = 0x08
+    GPU_FAN_SPEED = 0x09
+    MEM_USE = 0x0A
     SONG = 0x0B
+    VRAM_USE = 0x0C
 
 class Displays(IntEnum):
     RIGHT = 0x00
@@ -33,14 +43,15 @@ def verify_checksum(data):
 
     return given_checksum == calc_checksum
 
-def send_command(command, data, ser):
+def send_command(command, data, ser, do_checksum = True):
     """Send a command with data and checksum"""
     # Form the message
     message = bytearray([command, len(data)] + data)
 
     # Calculate and append checksum
-    checksum = calculate_checksum(message)
-    message.append(checksum)
+    if do_checksum:
+        checksum = calculate_checksum(message)
+        message.append(checksum)
 
     # Send to Arduino
     ser.write(message)
@@ -88,9 +99,53 @@ def process_command(command_data):
         case Commands.DISPLAY:
             return Displays(command_data[2])
 
+def send_cpu_temp(ser):
+    data = [math.ceil(psutil.sensors_temperatures()["coretemp"][0].current)]
+    message = send_command(Commands.CPU_TEMP, data, ser)
+    print(f"Sent CPU temperature: {data[0]}")
+    print(f"Bytes: {[hex(b) for b in message]}")
+
+def send_cpu_use(ser):
+    data = [math.ceil(psutil.cpu_percent(interval=0.1))]
+    message = send_command(Commands.CPU_USE, data, ser)
+    print(f"Sent CPU usage: {data[0]}")
+    print(f"Bytes: {[hex(b) for b in message]}")
+
+def send_mem_use(ser):
+    data = [math.ceil(psutil.virtual_memory().percent)]
+    message = send_command(Commands.MEM_USE, data, ser)
+    print(f"Sent memory usage: {data[0]}")
+    print(f"Bytes: {[hex(b) for b in message]}")
+
+def send_gpu_temp(gpu, ser):
+    data = [math.ceil(gpu.query_temperature())]
+    message = send_command(Commands.GPU_TEMP, data, ser)
+    print(f"Sent GPU temperature: {data[0]}")
+    print(f"Bytes: {[hex(b) for b in message]}")
+
+def send_gpu_use(gpu, ser):
+    data = [math.ceil(gpu.query_utilisation()[max(gpu.query_utilisation())]*100)]
+    message = send_command(Commands.GPU_USE, data, ser)
+    print(f"Sent GPU usage: {data[0]}")
+    print(f"Bytes: {[hex(b) for b in message]}")
+
+def send_gpu_fan_speed(gpu, ser):
+    speed = psutil.sensors_fans()["amdgpu"][0].current
+    data = [speed >> 8, speed & 0xFF]
+    message = send_command(Commands.GPU_FAN_SPEED, data, ser)
+    print(f"Sent GPU fan speed: {data[0]}")
+    print(f"Bytes: {[hex(b) for b in message]}")
+
+def send_vram_use(gpu, ser):
+    data = [math.ceil(gpu.query_vram_usage() / gpu.memory_info["vram_size"])]
+    message = send_command(Commands.VRAM_USE, data, ser)
+    print(f"Sent VRAM usage: {data[0]}")
+    print(f"Bytes: {[hex(b) for b in message]}")
+
 def send_not_implemented_msg(disp, ser):
     msg = "Not Done"
     data = [int(ord(c)) for c in msg]
+    data.append(int(disp))
 
     message = send_command(Commands.SONG, data, ser)
 
@@ -100,6 +155,8 @@ def send_not_implemented_msg(disp, ser):
 
 def write_serial(ser, q):
     disp = Displays.RIGHT
+    GPU = pyamdgpuinfo.get_gpu(0)
+    GPU.start_utilisation_polling()
     while True:
         if not q.empty():
             cmd = q.get()
@@ -109,9 +166,21 @@ def write_serial(ser, q):
             case Displays.RIGHT:
                 send_current_time(ser)
                 send_current_date(ser)
+            case Displays.UP:
+                send_cpu_temp(ser)
+                send_mem_use(ser)
+                send_cpu_use(ser)
+            case Displays.DOWN:
+                send_gpu_temp(GPU, ser)
+                send_gpu_use(GPU, ser)
+                send_gpu_fan_speed(GPU, ser)
+                send_vram_use(GPU, ser)
             case _:
                 send_not_implemented_msg(disp, ser)
+                while q.empty():
+                    time.sleep(1)
         time.sleep(1)
+
 def main():
     # Configure serial port - adjust as needed
     port = '/dev/ttyACM0'  # Change to your CDC-ACM port
@@ -123,6 +192,20 @@ def main():
         print(f"Connected to {port} at {baud_rate} baud")
 
         q = Queue()
+
+        while True:
+            print("Waiting for arduino to be ready")
+            send_command(Commands.READY, [], ser, False)
+            time.sleep(2)
+            if ser.in_waiting > 0:
+                print("Data in serial")
+                data_in = []
+                data_in.append(int(ser.read(1).hex()))
+                data_in.append(int(ser.read(1).hex()))
+                print(data_in)
+                if data_in == [0x00, 0x00]:
+                    print("Arduino is ready")
+                    break
 
         t1 = threading.Thread(target=write_serial, args=(ser,q,))
 

@@ -50,6 +50,66 @@
 #define BUTTON_SELECT_ADC   4
 #define BUTTON_NONE_ADC     5
 
+/* Temperature symbol - thermometer */
+static uint8_t temperature_char[] = {
+    0x0E,  /* 01110 */
+    0x0A,  /* 01010 */
+    0x0A,  /* 01010 */
+    0x0E,  /* 01110 */
+    0x0E,  /* 01110 */
+    0x1F,  /* 11111 */
+    0x1F,  /* 11111 */
+    0x0E   /* 01110 */
+};
+
+/* Fan symbol - frame 1 (for animation) */
+static uint8_t fan_char1[] = {
+    0x00,  /* 00000 */
+    0x0E,  /* 01110 */
+    0x13,  /* 10011 */
+    0x15,  /* 10101 */
+    0x19,  /* 11001 */
+    0x0E,  /* 01110 */
+    0x00,  /* 00000 */
+    0x00   /* 00000 */
+};
+
+/* Fan symbol - frame 2 (for animation) */
+static uint8_t fan_char2[] = {
+    0x00,  /* 00000 */
+    0x0E,  /* 01110 */
+    0x19,  /* 11001 */
+    0x15,  /* 10101 */
+    0x13,  /* 10011 */
+    0x0E,  /* 01110 */
+    0x00,  /* 00000 */
+    0x00   /* 00000 */
+};
+
+/* CPU symbol */
+static uint8_t cpu_char[] = {
+    0x18,  /* 11000 */
+    0x10,  /* 10000 */
+    0x1B,  /* 11011 */
+    0x03,  /* 00011 */
+    0x02,  /* 00010 */
+    0x02,  /* 00010 */
+    0x14,  /* 10100 */
+    0x1C   /* 11100 */
+};
+
+/* Memory/RAM symbol */
+static uint8_t memory_char[] = {
+    0x0E,  /* 01110 */
+    0x0B,  /* 01011 */
+    0x0E,  /* 01110 */
+    0x0F,  /* 01111 */
+    0x0A,  /* 01010 */
+    0x0F,  /* 01111 */
+    0x0A,  /* 01010 */
+    0x0F   /* 01111 */
+};
+
 /* Possible button values */
 typedef enum {
     BUTTON_NONE,
