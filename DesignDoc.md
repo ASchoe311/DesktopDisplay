@@ -128,3 +128,13 @@ Any received message will be checked against the checksum it is sent with. If th
   B01010,
   B01111
 };`
+6. `byte musicChar[] = {
+  B00111,
+  B01111,
+  B01001,
+  B01001,
+  B01011,
+  B11011,
+  B11000,
+  B00000
+};`
