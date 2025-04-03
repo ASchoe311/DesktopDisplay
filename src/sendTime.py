@@ -125,7 +125,7 @@ def send_cpu_temp(ser):
         data = [math.ceil(psutil.sensors_temperatures()["coretemp"][0].current)]
         
     else:
-        data = [math.ceil(next((x for x in hwSensors if x.Name == "Core Average" and x.Parent == intelHWID), None).Value)]
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "Core Max" and x.Parent == intelHWID), None).Value)]
 
     message = send_command(Commands.CPU_TEMP, data, ser)
     print(f"Sent CPU temperature: {data[0]}")
@@ -232,7 +232,7 @@ def write_serial(ser, q):
                         time.sleep(1)
         except:
             continue        
-        time.sleep(1)
+        time.sleep(0.5)
 
 def main():
     parser = argparse.ArgumentParser(description="Sends data to arduino")
