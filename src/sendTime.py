@@ -7,7 +7,26 @@ from datetime import datetime
 from enum import IntEnum
 import psutil
 import math
-import pyamdgpuinfo
+import sys
+import argparse
+
+import platform
+if platform.system() == "Linux":
+    import pyamdgpuinfo
+elif platform.system() == "Windows":
+    import wmi
+    w = wmi.WMI(namespace="root\\LibreHardwareMonitor")
+    intelHWID = 0
+    amdHWID = 0
+    memHWID = "/ram"
+    hwSensors = w.Sensor()
+    for hw in w.Hardware():
+        if 'AMD' in hw.Name:
+            amdHWID = hw.Identifier
+        if 'Intel' in hw.Name:
+            intelHWID = hw.Identifier
+else:
+    sys.exit(1)
 
 class Commands(IntEnum):
     READY = 0x00
@@ -91,7 +110,9 @@ def send_current_date(ser):
     print(f"Bytes: {[hex(b) for b in message]}")
 
 def process_command(command_data):
-    if not verify_checksum(command_data[0:-1]): return
+    if command_data == "quit":
+        return None
+    if not verify_checksum(command_data[0:-1]): return False
     cmd = Commands(command_data[0])
     match cmd:
         case Commands.READY:
@@ -100,44 +121,69 @@ def process_command(command_data):
             return Displays(command_data[2])
 
 def send_cpu_temp(ser):
-    data = [math.ceil(psutil.sensors_temperatures()["coretemp"][0].current)]
+    if '_wmi' not in sys.modules:
+        data = [math.ceil(psutil.sensors_temperatures()["coretemp"][0].current)]
+        
+    else:
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "Core Average" and x.Parent == intelHWID), None).Value)]
+
     message = send_command(Commands.CPU_TEMP, data, ser)
     print(f"Sent CPU temperature: {data[0]}")
     print(f"Bytes: {[hex(b) for b in message]}")
 
 def send_cpu_use(ser):
-    data = [math.ceil(psutil.cpu_percent(interval=0.1))]
+    if '_wmi' not in sys.modules:
+        data = [math.ceil(psutil.cpu_percent(interval=0.1))]
+    else:
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "CPU Total" and x.Parent == intelHWID), None).Value)]
+
     message = send_command(Commands.CPU_USE, data, ser)
     print(f"Sent CPU usage: {data[0]}")
     print(f"Bytes: {[hex(b) for b in message]}")
 
 def send_mem_use(ser):
-    data = [math.ceil(psutil.virtual_memory().percent)]
+    if '_wmi' not in sys.modules:
+        data = [math.ceil(psutil.virtual_memory().percent)]
+    else:
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "Memory" and x.Parent == memHWID), None).value)]
+
     message = send_command(Commands.MEM_USE, data, ser)
     print(f"Sent memory usage: {data[0]}")
     print(f"Bytes: {[hex(b) for b in message]}")
 
 def send_gpu_temp(gpu, ser):
-    data = [math.ceil(gpu.query_temperature())]
+    if '_wmi' not in sys.modules:
+        data = [math.ceil(gpu.query_temperature())]
+    else:
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "GPU Core" and x.SensorType == "Temperature" and x.Parent == amdHWID), None).value)]
     message = send_command(Commands.GPU_TEMP, data, ser)
     print(f"Sent GPU temperature: {data[0]}")
     print(f"Bytes: {[hex(b) for b in message]}")
 
 def send_gpu_use(gpu, ser):
-    data = [math.ceil(gpu.query_utilisation()[max(gpu.query_utilisation())]*100)]
+    if '_wmi' not in sys.modules:
+        data = [math.ceil(gpu.query_utilisation()[max(gpu.query_utilisation())]*100)]
+    else:
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "GPU Core" and x.SensorType == "Load" and x.Parent == amdHWID), None).value)]
     message = send_command(Commands.GPU_USE, data, ser)
     print(f"Sent GPU usage: {data[0]}")
     print(f"Bytes: {[hex(b) for b in message]}")
 
 def send_gpu_fan_speed(gpu, ser):
-    speed = psutil.sensors_fans()["amdgpu"][0].current
+    if '_wmi' not in sys.modules:
+        speed = psutil.sensors_fans()["amdgpu"][0].current
+    else:
+        speed = math.ceil(next((x for x in hwSensors if x.Name == "GPU Fan" and x.SensorType == "Fan" and x.Parent == amdHWID), None).value)    
     data = [speed >> 8, speed & 0xFF]
     message = send_command(Commands.GPU_FAN_SPEED, data, ser)
     print(f"Sent GPU fan speed: {data[0]}")
     print(f"Bytes: {[hex(b) for b in message]}")
 
 def send_vram_use(gpu, ser):
-    data = [math.ceil(gpu.query_vram_usage() / gpu.memory_info["vram_size"])]
+    if '_wmi' not in sys.modules:
+        data = [math.ceil(gpu.query_vram_usage() / gpu.memory_info["vram_size"])]
+    else:
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "GPU Memory" and x.SensorType == "Load" and x.Parent == amdHWID), None).value)]
     message = send_command(Commands.VRAM_USE, data, ser)
     print(f"Sent VRAM usage: {data[0]}")
     print(f"Bytes: {[hex(b) for b in message]}")
@@ -155,35 +201,48 @@ def send_not_implemented_msg(disp, ser):
 
 def write_serial(ser, q):
     disp = Displays.RIGHT
-    GPU = pyamdgpuinfo.get_gpu(0)
-    GPU.start_utilisation_polling()
+    GPU = 0
+    if 'pyamdgpuinfo' in sys.modules:
+        GPU = pyamdgpuinfo.get_gpu(0)
+        GPU.start_utilisation_polling()
     while True:
         if not q.empty():
             cmd = q.get()
             disp = process_command(cmd)
+            if disp == None:
+                break
             q.task_done()
-        match disp:
-            case Displays.RIGHT:
-                send_current_time(ser)
-                send_current_date(ser)
-            case Displays.UP:
-                send_cpu_temp(ser)
-                send_mem_use(ser)
-                send_cpu_use(ser)
-            case Displays.DOWN:
-                send_gpu_temp(GPU, ser)
-                send_gpu_use(GPU, ser)
-                send_gpu_fan_speed(GPU, ser)
-                send_vram_use(GPU, ser)
-            case _:
-                send_not_implemented_msg(disp, ser)
-                while q.empty():
-                    time.sleep(1)
+        try:
+            match disp:
+                case Displays.RIGHT:
+                    send_current_time(ser)
+                    send_current_date(ser)
+                case Displays.UP:
+                    send_cpu_temp(ser)
+                    send_mem_use(ser)
+                    send_cpu_use(ser)
+                case Displays.DOWN:
+                    send_gpu_temp(GPU, ser)
+                    send_gpu_use(GPU, ser)
+                    send_gpu_fan_speed(GPU, ser)
+                    send_vram_use(GPU, ser)
+                case _:
+                    send_not_implemented_msg(disp, ser)
+                    while q.empty():
+                        time.sleep(1)
+        except:
+            continue        
         time.sleep(1)
 
 def main():
+    parser = argparse.ArgumentParser(description="Sends data to arduino")
+    parser.add_argument("-p", "--port", type=str, help="Serial port (optional)")
+    args = parser.parse_args()
+    port='/dev/ttyACM0'
+    if args.port:
+        port = args.port
+    print(port)
     # Configure serial port - adjust as needed
-    port = '/dev/ttyACM0'  # Change to your CDC-ACM port
     baud_rate = 115200
 
     try:
@@ -208,7 +267,6 @@ def main():
                     break
 
         t1 = threading.Thread(target=write_serial, args=(ser,q,))
-
         t1.start()
 
         while True:
@@ -219,8 +277,9 @@ def main():
                 print(f"Received data: {data_in}")
                 q.put(data_in)
                 q.join()
-
-            time.sleep(1)
+            global hwSensors
+            hwSensors = w.Sensor()
+            time.sleep(0.1)
 
         # Close serial port
         ser.close()
@@ -228,6 +287,16 @@ def main():
 
     except serial.SerialException as e:
         print(f"Error: {e}")
+
+    except KeyboardInterrupt:
+        print("Interrupt signal received")
+        print("Joining serial write thread")
+        q.put("quit")
+        t1.join()
+        print("Closing serial connection")
+        ser.close()
+        print("Exiting")
+        sys.exit(0)
 
 if __name__ == "__main__":
     main()
