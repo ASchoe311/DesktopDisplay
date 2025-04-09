@@ -1,63 +1,336 @@
+import threading
+from pyexpat.errors import messages
+from queue import Queue
 import serial
 import time
+from datetime import datetime
+from enum import IntEnum
+import psutil
+import math
 import sys
+import argparse
 
-def send_string_with_length(ser, text):
-    """Send a string over UART preceded by its length as a byte"""
-    # Convert string to bytes if it's not already
-    if isinstance(text, str):
-        text_bytes = text.encode('utf-8')
-    else:
-        text_bytes = text
+import logging
+logging.basicConfig(filename="desktopdisplay.log", level=logging.INFO, filemode='w+')
+logger = logging.getLogger()
 
-    # Get length (capped at 255 due to one byte limit)
-    length = min(len(text_bytes), 255)
+import platform
+if platform.system() == "Linux":
+    import pyamdgpuinfo
+elif platform.system() == "Windows":
+    import subprocess
+    import wmi
+    w = wmi.WMI(namespace="root\\LibreHardwareMonitor")
+    intelHWID = 0
+    amdHWID = 0
+    memHWID = "/ram"
+    logger.info("Checking if Libre Hardware Monitor is running")
+    if len([i for i in psutil.process_iter(['name']) if "Libre" in i.name()]) < 1:
+        logger.info("Libre Hardware Monitor not running")
+        import os
+        os.system("C:\\Users\\adamr\\Downloads\\LibreHardwareMonitor-net472\\LibreHardwareMonitor.exe")
+        logger.info("Starting Libre Hardware Monitor")
+    while w.Sensor() == []:
+        logger.info("Waiting for hardware sensors to be initialized")
+        time.sleep(1)
+    logger.info("Hardware sensors ready")
+    hwSensors = w.Sensor()
+    for hw in w.Hardware():
+        if 'AMD' in hw.Name:
+            amdHWID = hw.Identifier
+        if 'Intel' in hw.Name:
+            intelHWID = hw.Identifier
+else:
+    sys.exit(1)
 
-    # Create message: length byte + text
-    message = bytes([length]) + text_bytes[:length]
+class Commands(IntEnum):
+    READY = 0x00
+    DISPLAY = 0x01
+    DATE = 0x02
+    TIME = 0x03
+    CPU_TEMP = 0x04
+    CPU_USE = 0x05
+    GPU_TEMP = 0x07
+    GPU_USE = 0x08
+    GPU_FAN_SPEED = 0x09
+    MEM_USE = 0x0A
+    SONG = 0x0B
+    VRAM_USE = 0x0C
 
-    # Send the message
+class Displays(IntEnum):
+    RIGHT = 0x00
+    UP = 0x01
+    DOWN = 0x02
+    LEFT = 0x03
+    SELECT = 0x04
+
+def calculate_checksum(data):
+    """Calculate XOR checksum of a byte array"""
+    checksum = 0
+    for byte in data:
+        checksum ^= byte
+    return checksum
+
+def verify_checksum(data):
+    given_checksum = data[-1]
+    calc_checksum = calculate_checksum(data)
+
+    return given_checksum == calc_checksum
+
+def send_command(command, data, ser, do_checksum = True):
+    """Send a command with data and checksum"""
+    # Form the message
+    message = bytearray([command, len(data)] + data)
+
+    # Calculate and append checksum
+    if do_checksum:
+        checksum = calculate_checksum(message)
+        message.append(checksum)
+
+    # Send to Arduino
     ser.write(message)
+    return message
 
-    # Print what was sent (for debugging)
-    print(f"Sent: Length={length}, Data={text_bytes[:length]}")
+def send_current_time(ser):
+    """Send current time using the specified protocol format"""
+    # Get current time
+    now = datetime.now()
 
-    # Small delay to ensure transmission completes
-    time.sleep(0.1)
+    # Extract hours (12-hour format), minutes, and AM/PM flag
+    hour = now.hour % 12
+    if hour == 0:  # Handle midnight/noon case
+        hour = 12
+
+    minute = now.minute
+    is_pm = 1 if now.hour >= 12 else 0
+
+    data = [hour, minute, is_pm]
+    message = send_command(Commands.TIME, data, ser)
+
+    # Debug output
+    time_str = f"{hour}:{minute:02d} {'PM' if is_pm else 'AM'}"
+    return f"Sent time: {time_str} | Bytes: {[hex(b) for b in message]}"
+
+def send_current_date(ser):
+    now = datetime.now()
+    year_parts = [now.year >> 8, now.year & 0xFF]
+
+    data = [now.month, now.day, year_parts[0], year_parts[1]]
+
+    message = send_command(Commands.DATE, data, ser)
+
+    date_str = f"{now.month:02d}/{now.day:02d}/{now.year}"
+    return f"Sent date: {date_str} | Bytes: {[hex(b) for b in message]}"
+
+def process_command(command_data):
+    if command_data == "quit":
+        return None
+    if not verify_checksum(command_data[0:-1]): return False
+    cmd = Commands(command_data[0])
+    match cmd:
+        case Commands.READY:
+            return
+        case Commands.DISPLAY:
+            return Displays(command_data[2])
+
+def send_cpu_temp(ser):
+    if '_wmi' not in sys.modules:
+        data = [math.ceil(psutil.sensors_temperatures()["coretemp"][0].current)]
+        
+    else:
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "Core Max" and x.Parent == intelHWID), None).Value)]
+
+    message = send_command(Commands.CPU_TEMP, data, ser)
+    return f"Sent CPU temperature: {data[0]} | Bytes: {[hex(b) for b in message]}"
+
+def send_cpu_use(ser):
+    if '_wmi' not in sys.modules:
+        data = [math.ceil(psutil.cpu_percent(interval=0.1))]
+    else:
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "CPU Total" and x.Parent == intelHWID), None).Value)]
+
+    message = send_command(Commands.CPU_USE, data, ser)
+    return f"Sent CPU usage: {data[0]} | Bytes: {[hex(b) for b in message]}"
+
+def send_mem_use(ser):
+    if '_wmi' not in sys.modules:
+        data = [math.ceil(psutil.virtual_memory().percent)]
+    else:
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "Memory" and x.Parent == memHWID), None).value)]
+
+    message = send_command(Commands.MEM_USE, data, ser)
+    return f"Sent memory usage: {data[0]} | Bytes: {[hex(b) for b in message]}"
+
+def send_gpu_temp(gpu, ser):
+    if '_wmi' not in sys.modules:
+        data = [math.ceil(gpu.query_temperature())]
+    else:
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "GPU Core" and x.SensorType == "Temperature" and x.Parent == amdHWID), None).value)]
+    message = send_command(Commands.GPU_TEMP, data, ser)
+    return f"Sent GPU temperature: {data[0]} | Bytes: {[hex(b) for b in message]}"
+
+def send_gpu_use(gpu, ser):
+    if '_wmi' not in sys.modules:
+        data = [math.ceil(gpu.query_utilisation()[max(gpu.query_utilisation())]*100)]
+    else:
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "GPU Core" and x.SensorType == "Load" and x.Parent == amdHWID), None).value)]
+    message = send_command(Commands.GPU_USE, data, ser)
+    return f"Sent GPU usage: {data[0]} | Bytes: {[hex(b) for b in message]}"
+
+def send_gpu_fan_speed(gpu, ser):
+    if '_wmi' not in sys.modules:
+        speed = psutil.sensors_fans()["amdgpu"][0].current
+    else:
+        speed = math.ceil(next((x for x in hwSensors if x.Name == "GPU Fan" and x.SensorType == "Fan" and x.Parent == amdHWID), None).value)    
+    data = [speed >> 8, speed & 0xFF]
+    message = send_command(Commands.GPU_FAN_SPEED, data, ser)
+    return f"Sent GPU fan speed: {data[0]} | Bytes: {[hex(b) for b in message]}"
+
+def send_vram_use(gpu, ser):
+    if '_wmi' not in sys.modules:
+        data = [math.ceil(gpu.query_vram_usage() / gpu.memory_info["vram_size"])]
+    else:
+        data = [math.ceil(next((x for x in hwSensors if x.Name == "GPU Memory" and x.SensorType == "Load" and x.Parent == amdHWID), None).value)]
+    message = send_command(Commands.VRAM_USE, data, ser)
+    return f"Sent VRAM usage: {data[0]} | Bytes: {[hex(b) for b in message]}"
+
+
+def send_not_implemented_msg(disp, ser):
+    msg = "Not Done"
+    data = [int(ord(c)) for c in msg]
+    data.append(int(disp))
+
+    message = send_command(Commands.SONG, data, ser)
+
+    song_str = f"{msg}"
+    return f"Sent song: {song_str} | Bytes: {[hex(b) for b in message]}"
+
+def write_serial(ser, q):
+    write_logger = logging.getLogger("SerialWrite")
+    disp = Displays.RIGHT
+    GPU = 0
+    if 'pyamdgpuinfo' in sys.modules:
+        GPU = pyamdgpuinfo.get_gpu(0)
+        GPU.start_utilisation_polling()
+    while True:
+        if not q.empty():
+            cmd = q.get()
+            disp = process_command(cmd)
+            if disp == None:
+                break
+            elif disp:
+                if ser.out_waiting > 0:
+                    ser.reset_output_buffer()
+                write_logger.info(f"Switching to write to display {disp.name}")
+            q.task_done()
+        try:
+            match disp:
+                case Displays.RIGHT:
+                    write_logger.info(send_current_time(ser))
+                    write_logger.info(send_current_date(ser))
+                case Displays.UP:
+                    write_logger.info(send_cpu_temp(ser))
+                    write_logger.info(send_mem_use(ser))
+                    write_logger.info(send_cpu_use(ser))
+                case Displays.DOWN:
+                    write_logger.info(send_gpu_temp(GPU, ser))
+                    write_logger.info(send_gpu_use(GPU, ser))
+                    write_logger.info(send_gpu_fan_speed(GPU, ser))
+                    write_logger.info(send_vram_use(GPU, ser))
+                case _:
+                    write_logger.info(send_not_implemented_msg(disp, ser))
+                    while q.empty():
+                        time.sleep(1)
+        except Exception as e:
+            logger.critical(e)
+            disp = Displays.RIGHT
+            continue
+        time.sleep(1)
+
+def shutdown(threads, queue, ser):
+    logger.info("Joining serial write thread")
+    print("Joining serial write thread")
+    queue.put("quit")
+    for thread in threads:
+        thread.join()
+    logger.info("Closing serial connection")
+    print("Closing serial connection")
+    ser.close()
+    logger.info("Exiting")
+    print("Exiting")
+    sys.exit(0)
 
 def main():
-    # Configure serial port - adjust these settings as needed
-    port = '/dev/ttyACM0'  # Windows: 'COM1', Linux: '/dev/ttyUSB0', Mac: '/dev/tty.usbserial'
+    parser = argparse.ArgumentParser(description="Sends data to arduino")
+    parser.add_argument("-p", "--port", type=str, help="Serial port (optional)")
+    parser.add_argument("-t", "--tail", action="store_true", help="Display logs in console")
+    args = parser.parse_args()
+    port='/dev/ttyACM0'
+    if args.port:
+        port = args.port
+    if args.tail:
+        logging.getLogger().addHandler(logging.StreamHandler(sys.stdout))
+    # Configure serial port - adjust as needed
     baud_rate = 115200
 
-    # Get port from command line if provided
-    if len(sys.argv) > 1:
-        port = sys.argv[1]
+    # Open serial port
+    ser = serial.Serial()
+    threads = []
+    q = Queue()
 
     try:
-        # Open serial port
-        ser = serial.Serial(port, baud_rate, timeout=1)
+        ser.port = port
+        ser.baudrate = baud_rate
+        ser.timeout = 1
+        ser.open()
+        logger.info(f"Connected to {port} at {baud_rate} baud")
         print(f"Connected to {port} at {baud_rate} baud")
-
-        # Main loop
         while True:
-            # Get input from user
-            text = input("Enter text to send (or 'exit' to quit): ")
+            logger.info("Waiting for arduino to be ready")
+            send_command(Commands.READY, [], ser, False)
+            time.sleep(2)
+            if ser.in_waiting > 0:
+                data_in = []
+                data_in.append(int(ser.read(1).hex()))
+                data_in.append(int(ser.read(1).hex()))
+                if data_in == [0x00, 0x00]:
+                    logger.info("Arduino is ready")
+                    break
+        
+        print("Received ready signal from Arduino")
 
-            # Check for exit command
-            if text.lower() == 'exit':
-                break
+        print("Starting read and write threads")
 
-            # Send the string with length prefix
-            send_string_with_length(ser, text)
+        t1 = threading.Thread(target=write_serial, args=(ser,q,))
+        threads.append(t1)
+        logger.info("Starting serial writer thread")
+        t1.start()
 
-        # Close the serial port
-        ser.close()
-        print("Serial port closed")
+        read_logger = logging.getLogger("SerialRead")
+        while True:
+            if ser.in_waiting > 0:
+                data_in = []
+                while ser.in_waiting > 0:
+                    data_in.append(int(ser.read(1).hex()))
+                read_logger.info(f"Received data: {data_in}")
+                q.put(data_in)
+                q.join()
+            global hwSensors
+            hwSensors = w.Sensor()
+            time.sleep(0.1)
 
     except serial.SerialException as e:
-        print(f"Error: {e}")
-        sys.exit(1)
+        logger.critical(f"Error: {e}")
+        logger.critical("Shutting down due to serial exception")
+        print("Serial exception, closing")
+        shutdown(threads, q, ser)
+
+
+    except KeyboardInterrupt:
+        logger.info("Interrupt signal received, shutting down")
+        print("Interrupt signal, closing")
+        shutdown(threads, q, ser)
+        
 
 if __name__ == "__main__":
     main()
