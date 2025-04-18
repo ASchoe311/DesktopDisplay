@@ -65,6 +65,8 @@ Commands will be as follows:
 11. 0x0A - This byte represents that the current memory usage is being sent. Memory usage is sent as a percentage of available memory used. If memory usage is at 39%, the data sent will be `0A 01 27 2C`
 12.  0x0B - This byte represents that the current playing audio title is being sent. If the current song is "Too Sweet", the data will be `0B 09 54 6F 6F 20 53 77 65 65 74 26`
 13. 0x0C - This byte represents the current VRAM usage is being sent. VRAM usage is sent as a percentage of available VRAM used. Same format as 0x0A
+14. 0x0D - This byte tells the arduino to clear the display. This will always be sent as `0D 00 0D`
+15. 0x0E - This byte tells the arduino that the host PC is closing the connection and to return to a waiting state. This will always be `0E 00 0E`.
 
 ### Display Pages
 The display will have 5 different "pages" of data to display, with each page being associated with a specific button.

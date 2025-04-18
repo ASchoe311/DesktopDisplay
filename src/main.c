@@ -225,6 +225,14 @@ uint8_t btn_map(lcd_button_t button) {
     }
 }
 
+int await_host() {
+    if (await_host_pc(&cdc_rx_rb, &lcd, cdc_dev)){
+        LOG_INF("Host PC Ready");
+        return 0;
+    }
+    LOG_ERR("Something went wrong waiting for host PC");
+    return -1;
+}
 
 int main(void)
 {
@@ -295,43 +303,16 @@ int main(void)
 
     k_msleep(1000);  // Show initial message for 1 second
 
-    lcd_clear(&lcd);
-    lcd_home(&lcd);
-    lcd_print(&lcd, "Device Ready");
-    lcd_set_cursor(&lcd, 1, 0);
-    lcd_print(&lcd, "Awaiting Host PC");
     LOG_INF("All devices initialized");
-    LOG_INF("Awaiting host PC initialization command");
 
     // Await init command
-    while (1) {
-        LOG_INF("Waiting for command");
-        if (ring_buf_get(&cdc_rx_rb, &byte, 1)) {
-            LOG_INF("Buffer has bytes");
-            if (parse_command_from_ring_buf(&cdc_rx_rb, &lcd, &byte)) {
-                LOG_INF("Got ready command from host PC");
-                lcd_clear(&lcd);
-                lcd_home(&lcd);
-                lcd_print(&lcd, "Host Ready");
-                lcd_set_cursor(&lcd, 1, 0);
-                lcd_print(&lcd, "Sending ready");
-                LOG_INF("Sending ready message back to host");
-                const uint8_t readyCmd[2] = {0x00, 0x00};
-                for (size_t i = 0; i < 2; i++) {
-                    uart_poll_out(cdc_dev, readyCmd[i]);
-                }
-                uint8_t cmd[4] = {
-                    0x01,
-                    0x01,
-                    0x00,
-                    0x00
-                };
-                send_message(cdc_dev, cmd);
-                break;
-            }
-        }
-        k_msleep(500);
-    }
+    if (await_host() == 0){
+		LOG_INF("Host PC Ready");
+	}
+	else {
+		LOG_ERR("Something went wrong waiting for host PC");
+		return -1;
+	}
 
     lcd_clear(&lcd);
     /* Main loop */
@@ -347,7 +328,15 @@ int main(void)
 
         /* If there's data in the ring buffer, process it */
         if (ring_buf_get(&cdc_rx_rb, &byte, 1)) {
-            parse_command_from_ring_buf(&cdc_rx_rb, &lcd, &byte);
+            if (!parse_command_from_ring_buf(&cdc_rx_rb, &lcd, &byte) && byte == 0x0E) {
+                if (await_host() == 0){
+                    LOG_INF("Host PC Ready");
+                }
+                else {
+                    LOG_ERR("Something went wrong waiting for host PC");
+                    return -1;
+                }
+            }
         }
 
 
@@ -359,21 +348,6 @@ int main(void)
 
 
         if (current_button != last_button && current_button != BUTTON_NONE) {
-            /* Clear the second line */
-            // lcd_clear(&lcd);
-            // lcd_print(&lcd, "                ");
-            //
-            // /* Print the button name */
-            // lcd_set_cursor(&lcd, 0, 0);
-            // lcd_print(&lcd, "Key: ");
-            // lcd_write_char(&lcd, button_name(current_button));
-            //
-            // /* Print the raw ADC value for debugging */
-            // lcd_set_cursor(&lcd, 0, 1);
-            // char adc_str[16];
-            // snprintf(adc_str, sizeof(adc_str), "ADC:%d", raw_value);
-            // lcd_print(&lcd, adc_str);
-
             last_button = current_button;
 
             /* Log the button press */

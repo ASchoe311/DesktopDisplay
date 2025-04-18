@@ -56,6 +56,8 @@ class Commands(IntEnum):
     MEM_USE = 0x0A
     SONG = 0x0B
     VRAM_USE = 0x0C
+    CLEAR_SCREEN = 0x0D
+    CLOSE_CONNECTION = 0x0E
 
 class Displays(IntEnum):
     RIGHT = 0x00
@@ -216,11 +218,12 @@ def write_serial(ser, q):
         if not q.empty():
             cmd = q.get()
             disp = process_command(cmd)
-            if disp == None:
+            if disp is None:
                 break
-            elif disp:
+            else:
                 if ser.out_waiting > 0:
                     ser.reset_output_buffer()
+                send_command(Commands.CLEAR_SCREEN, [], ser)
                 write_logger.info(f"Switching to write to display {disp.name}")
             q.task_done()
         try:
@@ -247,18 +250,60 @@ def write_serial(ser, q):
             continue
         time.sleep(1)
 
-def shutdown(threads, queue, ser):
+def shutdown(queue, ser):
     logger.info("Joining serial write thread")
     print("Joining serial write thread")
     queue.put("quit")
-    for thread in threads:
-        thread.join()
+    for thread in threading.enumerate():
+        if thread != threading.current_thread():
+            thread.join()
     logger.info("Closing serial connection")
     print("Closing serial connection")
     ser.close()
     logger.info("Exiting")
     print("Exiting")
     sys.exit(0)
+
+def run(port, baud_rate, q, ser):
+    ser.port = port
+    ser.baudrate = baud_rate
+    ser.timeout = 1
+    ser.open()
+    logger.info(f"Connected to {port} at {baud_rate} baud")
+    print(f"Connected to {port} at {baud_rate} baud")
+    while True:
+        logger.info("Waiting for arduino to be ready")
+        send_command(Commands.READY, [], ser, False)
+        time.sleep(2)
+        if ser.in_waiting > 0:
+            data_in = []
+            data_in.append(int(ser.read(1).hex()))
+            data_in.append(int(ser.read(1).hex()))
+            if data_in == [0x00, 0x00]:
+                logger.info("Arduino is ready")
+                break
+
+    print("Received ready signal from Arduino")
+
+    print("Starting read and write threads")
+
+    t1 = threading.Thread(target=write_serial, args=(ser,q,))
+    logger.info("Starting serial writer thread")
+    t1.start()
+
+    read_logger = logging.getLogger("SerialRead")
+    while True:
+        if ser.in_waiting > 0:
+            data_in = []
+            while ser.in_waiting > 0:
+                data_in.append(int(ser.read(1).hex()))
+            read_logger.info(f"Received data: {data_in}")
+            q.put(data_in)
+            q.join()
+        if platform.system() == "Windows":
+            global hwSensors
+            hwSensors = w.Sensor()
+        time.sleep(0.1)
 
 def main():
     parser = argparse.ArgumentParser(description="Sends data to arduino")
@@ -273,64 +318,26 @@ def main():
     # Configure serial port - adjust as needed
     baud_rate = 115200
 
-    # Open serial port
-    ser = serial.Serial()
-    threads = []
     q = Queue()
-
+    ser = serial.Serial()
     try:
-        ser.port = port
-        ser.baudrate = baud_rate
-        ser.timeout = 1
-        ser.open()
-        logger.info(f"Connected to {port} at {baud_rate} baud")
-        print(f"Connected to {port} at {baud_rate} baud")
-        while True:
-            logger.info("Waiting for arduino to be ready")
-            send_command(Commands.READY, [], ser, False)
-            time.sleep(2)
-            if ser.in_waiting > 0:
-                data_in = []
-                data_in.append(int(ser.read(1).hex()))
-                data_in.append(int(ser.read(1).hex()))
-                if data_in == [0x00, 0x00]:
-                    logger.info("Arduino is ready")
-                    break
-        
-        print("Received ready signal from Arduino")
-
-        print("Starting read and write threads")
-
-        t1 = threading.Thread(target=write_serial, args=(ser,q,))
-        threads.append(t1)
-        logger.info("Starting serial writer thread")
-        t1.start()
-
-        read_logger = logging.getLogger("SerialRead")
-        while True:
-            if ser.in_waiting > 0:
-                data_in = []
-                while ser.in_waiting > 0:
-                    data_in.append(int(ser.read(1).hex()))
-                read_logger.info(f"Received data: {data_in}")
-                q.put(data_in)
-                q.join()
-            global hwSensors
-            hwSensors = w.Sensor()
-            time.sleep(0.1)
-
+        run(port, baud_rate, q, ser)
     except serial.SerialException as e:
         logger.critical(f"Error: {e}")
         logger.critical("Shutting down due to serial exception")
         print("Serial exception, closing")
-        shutdown(threads, q, ser)
-
-
+        shutdown(q, ser)
     except KeyboardInterrupt:
         logger.info("Interrupt signal received, shutting down")
         print("Interrupt signal, closing")
-        shutdown(threads, q, ser)
-        
+        send_command(Commands.CLOSE_CONNECTION, [], ser)
+        shutdown(q, ser)
+    except OSError as e:
+        logger.critical(f"Error: {e}")
+        logger.critical("Shutting down due to OS exception")
+        print("OS exception, closing")
+        shutdown(q, ser)
+
 
 if __name__ == "__main__":
     main()

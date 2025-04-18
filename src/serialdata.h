@@ -54,6 +54,9 @@
 #define VRAM_USE_ROW 1
 #define VRAM_USE_COL 10
 
+#define CLEAR_SCREEN_CMD 0x0D
+#define CLOSE_CONNECTION_CMD 0x0E
+
 #define R_PAGE 0x00
 #define U_PAGE 0x01
 #define D_PAGE 0x02
@@ -70,7 +73,7 @@ void send_message(const struct device *uart_dev, uint8_t *data);
 
 bool parse_command_from_ring_buf(struct ring_buf *buf, lcd_state_t *lcd, uint8_t *cmdByte);
 
-void dispatch_command(lcd_state_t *lcd, uint8_t *command);
+bool dispatch_command(lcd_state_t *lcd, uint8_t *command);
 
 void handle_date_cmd(lcd_state_t *lcd, uint8_t *command);
 
@@ -94,4 +97,8 @@ void handle_song_cmd(lcd_state_t *lcd, uint8_t *command);
 
 void not_implemented_display(lcd_state_t *lcd, uint8_t *command);
 
-bool check_host_ready(uint8_t *command);
+void clear_screen_cmd(lcd_state_t *lcd);
+
+void close_connection_cmd(lcd_state_t *lcd);
+
+bool await_host_pc(struct ring_buf *buf, lcd_state_t *lcd, const struct device *cdc_dev);

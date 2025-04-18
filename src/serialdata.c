@@ -20,17 +20,20 @@ void log_received_data(uint8_t *command) {
 }
 
 uint8_t calculate_checksum(uint8_t *data) {
-    uint8_t checksum = 0x00;
-    for (uint8_t i = 0; i < data[1] + 2; i++) {
-      checksum ^= data[i];
+    uint8_t checksum = *data;
+    for (uint8_t i = 1; i < *(data + 1) + 2; i++) {
+        if (DEBUG) {
+            LOG_DBG("Byte is %02x, Checksum is %02x", *(data + i), checksum);
+        }
+        checksum ^= *(data + i);
     }
     return checksum;
 }
 
 bool verify_checksum(uint8_t *data) {
-    if (data[1] < 1){
-      return false;
-    }
+    // if (data[1] < 1){
+    //   return false;
+    // }
     uint8_t received_checksum = data[data[1] + 2];
     uint8_t calc_checksum = calculate_checksum(data);
 
@@ -48,7 +51,6 @@ void send_message(const struct device *uart_dev, uint8_t *data) {
       uart_poll_out(uart_dev, data[i]);
     }
 }
-
 
 bool parse_command_from_ring_buf(struct ring_buf *buf, lcd_state_t *lcd, uint8_t *cmdByte){
     uint8_t dataLength;
@@ -69,15 +71,22 @@ bool parse_command_from_ring_buf(struct ring_buf *buf, lcd_state_t *lcd, uint8_t
         ring_buf_get(buf, &c, 1);
         data[i+2] = c;
     }
+
     dispatch_command(lcd, data);
-    LOG_INF("Received command");
     return false;
 }
 
-void dispatch_command(lcd_state_t *lcd, uint8_t *command) {
-    if (!verify_checksum(command)) {
-        return;
+bool dispatch_command(lcd_state_t *lcd, uint8_t *command) {
+    if (DEBUG) {
+        log_received_data(command);
+        LOG_DBG("Command is %02x", *command);
     }
+
+    if (!verify_checksum(command)) {
+        LOG_INF("Received invalid checksum");
+        return false;
+    }
+
     LOG_INF("Command verified");
     switch (*command) {
         case DATE_CMD:
@@ -110,16 +119,19 @@ void dispatch_command(lcd_state_t *lcd, uint8_t *command) {
         case AUDIO_CMD:
             not_implemented_display(lcd, command);
             break;
-        default: return;
+        case CLEAR_SCREEN_CMD:
+            LOG_INF("Clearing screen");
+            LOG_DBG("Clearing screen");
+            lcd_clear(lcd);
+            break;
+        case CLOSE_CONNECTION_CMD:
+            return false;
+        default: return true;
     }
+    return true;
 }
 
 void handle_date_cmd(lcd_state_t *lcd, uint8_t *command) {
-
-    if (DEBUG) {
-        log_received_data(command);
-    }
-
     lcd_set_cursor(lcd, DATE_ROW, DATE_COL);
     char printStr[14];
     sprintf(printStr, "%02u/%02u/%u", command[2], command[3], (command[4] << 8) | command[5]);
@@ -128,11 +140,6 @@ void handle_date_cmd(lcd_state_t *lcd, uint8_t *command) {
 }
 
 void handle_time_cmd(lcd_state_t *lcd, uint8_t *command) {
-
-    if (DEBUG) {
-        log_received_data(command);
-    }
-
     lcd_set_cursor(lcd, TIME_ROW, TIME_COL);
     char printStr[11] = "HH:MM AA";
     char amPm[3];
@@ -225,11 +232,6 @@ void handle_vram_cmd(lcd_state_t *lcd, uint8_t *command) {
 }
 
 void handle_song_cmd(lcd_state_t *lcd, uint8_t *command) {
-
-    if (DEBUG) {
-        log_received_data(command);
-    }
-
     lcd_set_cursor(lcd, 0, 0);
     char printStr[17];
     for (uint8_t i = 2; i < command[1]+2; i++) {
@@ -269,4 +271,45 @@ void not_implemented_display(lcd_state_t *lcd, uint8_t *command) {
     lcd_write_char(lcd, c);
 }
 
+void clear_screen_cmd(lcd_state_t *lcd) {
+    LOG_INF("Clearing screen");
+    lcd_clear(lcd);
+}
 
+bool await_host_pc(struct ring_buf *buf, lcd_state_t *lcd, const struct device *cdc_dev) {
+	uint8_t byte;
+	lcd_clear(lcd);
+    lcd_home(lcd);
+    lcd_print(lcd, "Device Ready");
+    lcd_set_cursor(lcd, 1, 0);
+    lcd_print(lcd, "Awaiting Host PC");
+	while (1){
+		LOG_INF("Waiting for command");
+        if (ring_buf_get(buf, &byte, 1)) {
+            LOG_INF("Buffer has bytes");
+            if (parse_command_from_ring_buf(buf, lcd, &byte)) {
+                LOG_INF("Got ready command from host PC");
+                lcd_clear(lcd);
+                lcd_home(lcd);
+                lcd_print(lcd, "Host Ready");
+                lcd_set_cursor(lcd, 1, 0);
+                lcd_print(lcd, "Sending ready");
+                LOG_INF("Sending ready message back to host");
+                for (size_t i = 0; i < 2; i++) {
+                    const uint8_t readyCmd[2] = {0x00, 0x00};
+                    uart_poll_out(cdc_dev, readyCmd[i]);
+                }
+                uint8_t cmd[4] = {
+                    0x01,
+                    0x01,
+                    0x00,
+                    0x00
+                };
+                send_message(cdc_dev, cmd);
+                return true;
+            }
+        }
+        k_msleep(500);
+	}
+	return false; // Should never be hit
+}
