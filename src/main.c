@@ -274,16 +274,28 @@ static lcd_button_t debounce_button(int32_t adc_value, lcd_button_t *last_stable
     return *last_stable_button;
 }
 
-uint8_t btn_map(lcd_button_t button) {
+// uint8_t btn_map(lcd_button_t button) {
+//     switch (button) {
+//         case BUTTON_RIGHT: return 0x01;
+//         case BUTTON_UP:    return 0x02;
+//         case BUTTON_DOWN:  return 0x03;
+//         case BUTTON_LEFT:  return 0x04;
+//         case BUTTON_SELECT: return 0x00;
+//         default: return 0x00;
+//     }
+// }
+
+uint8_t btn_map(uint8_t button) {
     switch (button) {
-        case BUTTON_RIGHT: return 0x00;
-        case BUTTON_UP:    return 0x01;
-        case BUTTON_DOWN:  return 0x02;
-        case BUTTON_LEFT:  return 0x03;
-        case BUTTON_SELECT: return 0x04;
+        case 0x00: return 0x01;
+        case 0x01:    return 0x02;
+        case 0x02:  return 0x03;
+        case 0x03:  return 0x04;
         default: return 0x00;
     }
 }
+
+
 
 int await_host() {
     if (await_host_pc(&cdc_rx_rb, &lcd, cdc_dev)){
@@ -339,9 +351,11 @@ int main(void)
     uint8_t byte;
     int ret;
     lcd_button_t current_button = BUTTON_NONE;
+    uint32_t curr_btn = 0x00;
     lcd_button_t last_button = BUTTON_NONE;
     lcd_button_t stable_button = BUTTON_NONE;  // For debouncing
     bool diagnostic_mode = false;  // Set to true to show raw ADC values
+    gpio_pin_configure(porta, btn_pin, GPIO_INPUT | GPIO_PULL_DOWN);
 #ifdef DEBUGMODE
     if (!device_is_ready(uart_dev)) {
         LOG_ERR("UART device (SERCOM5) not ready");
@@ -398,6 +412,7 @@ int main(void)
 	}
 
     lcd_clear(&lcd);
+    bool btn_pressed = false;
     /* Main loop */
     while (1) {
         /* Read ADC value */
@@ -417,21 +432,20 @@ int main(void)
             }
         }
 
-        if (gpio_pin_get(porta, btn_pin)) {
-            LOG_INF("Button pin pressed");
-        }
+
 
         /* Get button state with debouncing */
-        current_button = debounce_button(raw_value, &stable_button);
+        // current_button = debounce_button(raw_value, &stable_button);
 
-        if (current_button != last_button && current_button != BUTTON_NONE) {
-            last_button = current_button;
-
+        if (gpio_pin_get(porta, btn_pin) && !btn_pressed) {
+            LOG_INF("Button pin pressed");
+            btn_pressed = true;
             /* Log the button press */
+            curr_btn = btn_map(curr_btn);
             uint8_t cmd[4] = {
                 0x01,
                 0x01,
-                btn_map(current_button),
+                curr_btn,
                 0x00
             };
 
@@ -442,6 +456,28 @@ int main(void)
             lcd_clear(&lcd);
             ring_buf_reset(&cdc_rx_rb);
         }
+        if (!gpio_pin_get(porta, btn_pin)) {
+            btn_pressed = false;
+        }
+
+        // if (current_button != last_button && current_button != BUTTON_NONE) {
+        //     last_button = current_button;
+        //
+        //     /* Log the button press */
+        //     uint8_t cmd[4] = {
+        //         0x01,
+        //         0x01,
+        //         btn_map(current_button),
+        //         0x00
+        //     };
+        //
+        //     LOG_INF("Sending command");
+        //     LOG_INF("current button is: %d", cmd[2]);
+        //
+        //     send_message(cdc_dev, cmd);
+        //     lcd_clear(&lcd);
+        //     ring_buf_reset(&cdc_rx_rb);
+        // }
 
         /* Periodically read temperature (every 500ms or so) */
         static uint32_t temp_counter = 0;
