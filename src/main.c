@@ -72,10 +72,6 @@ static struct adc_sequence temp_sequence = {
 const struct device *porta = DEVICE_DT_GET(DT_NODELABEL(porta));
 const struct device *portb = DEVICE_DT_GET(DT_NODELABEL(portb));
 
-const int btn_pin = 20;
-
-
-
 /* Initialize the LCD */
 static int init_lcd(void)
 {
@@ -415,10 +411,6 @@ int main(void)
                     return -1;
                 }
             }
-        }
-
-        if (gpio_pin_get(porta, btn_pin)) {
-            LOG_INF("Button pin pressed");
         }
 
         /* Get button state with debouncing */
