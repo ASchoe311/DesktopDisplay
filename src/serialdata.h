@@ -57,6 +57,11 @@
 #define CLEAR_SCREEN_CMD 0x0D
 #define CLOSE_CONNECTION_CMD 0x0E
 
+#define AMBIENT_TEMP_TITLE_ROW 0
+#define AMBIENT_TEMP_TITLE_COL 3
+#define AMBIENT_TEMP_ROW 1
+#define AMBIENT_TEMP_COL 3
+
 #define R_PAGE 0x00
 #define U_PAGE 0x01
 #define D_PAGE 0x02
@@ -102,3 +107,5 @@ void clear_screen_cmd(lcd_state_t *lcd);
 void close_connection_cmd(lcd_state_t *lcd);
 
 bool await_host_pc(struct ring_buf *buf, lcd_state_t *lcd, const struct device *cdc_dev);
+
+void display_ambient_temperature(lcd_state_t *lcd, float temperature);

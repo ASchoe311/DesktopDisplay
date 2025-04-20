@@ -39,7 +39,7 @@ RING_BUF_DECLARE(cdc_rx_rb, RING_BUF_SIZE);
 #define BUTTON_DOWN_MAX     550
 #define BUTTON_LEFT_MAX     650
 #define BUTTON_SELECT_MAX   745
-#define BUTTON_NONE_MAX     1023   // Max value for 12-bit resolution
+#define BUTTON_NONE_MAX     1023   // Max value for 10-bit resolution
 
 /* Button debouncing parameters */
 #define DEBOUNCE_TIME_MS    50      // Time in ms required for stable button reading
@@ -54,14 +54,33 @@ const struct device *const uart_dev = DEVICE_DT_GET(DT_NODELABEL(sercom5));
 #endif
 
 /* ADC channel from devicetree */
-static const struct adc_dt_spec adc_channel = ADC_DT_SPEC_GET(DT_PATH(zephyr_user));
+static const struct adc_dt_spec button_adc_channel = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 0);
+/* Define ADC sequence for sampling */
+int16_t button_adc_buf;
+static struct adc_sequence button_sequence = {
+    .buffer = &button_adc_buf,
+    .buffer_size = sizeof(button_adc_buf),
+};
+
+static const struct adc_dt_spec temp_adc_channel = ADC_DT_SPEC_GET_BY_IDX(DT_PATH(zephyr_user), 1);
+static int16_t temp_adc_buf;
+static struct adc_sequence temp_sequence = {
+    .buffer = &temp_adc_buf,
+    .buffer_size = sizeof(temp_adc_buf),
+};
+
+const struct device *porta = DEVICE_DT_GET(DT_NODELABEL(porta));
+const struct device *portb = DEVICE_DT_GET(DT_NODELABEL(portb));
+
+const int btn_pin = 20;
+
+
 
 /* Initialize the LCD */
 static int init_lcd(void)
 {
     /* Get GPIO devices */
-    const struct device *porta = DEVICE_DT_GET(DT_NODELABEL(porta));
-    const struct device *portb = DEVICE_DT_GET(DT_NODELABEL(portb));
+
 
     if (!device_is_ready(porta) || !device_is_ready(portb)) {
         LOG_ERR("GPIO devices not ready");
@@ -129,7 +148,48 @@ static int init_lcd(void)
     return ret;
 }
 
+static int init_adc(void) {
+    int ret;
+    /* Check if ADC controller is ready */
+    if (!adc_is_ready_dt(&button_adc_channel)) {
+        LOG_ERR("ADC controller device %s not ready", button_adc_channel.dev->name);
+        return -1;
+    }
 
+    /* Setup ADC channel */
+    ret = adc_channel_setup_dt(&button_adc_channel);
+    if (ret < 0) {
+        LOG_ERR("Could not setup channel #%d (%d)", button_adc_channel.channel_id, ret);
+        return -1;
+    }
+
+    /* Initialize ADC sequence */
+    ret = adc_sequence_init_dt(&button_adc_channel, &button_sequence);
+    if (ret < 0) {
+        LOG_ERR("Could not initialize sequence (%d)", ret);
+        return -1;
+    }
+
+    if (!adc_is_ready_dt(&temp_adc_channel)) {
+        LOG_ERR("ADC controller device %s not ready", temp_adc_channel.dev->name);
+        return -1;
+    }
+
+    /* Setup ADC channel */
+    ret = adc_channel_setup_dt(&temp_adc_channel);
+    if (ret < 0) {
+        LOG_ERR("Could not setup channel #%d (%d)", temp_adc_channel.channel_id, ret);
+        return -1;
+    }
+
+    /* Initialize ADC sequence */
+    ret = adc_sequence_init_dt(&temp_adc_channel, &temp_sequence);
+    if (ret < 0) {
+        LOG_ERR("Could not initialize sequence (%d)", ret);
+        return -1;
+    }
+    return 0;
+}
 
 /* UART interrupt callback function */
 static void cdc_cb(const struct device *dev, void *user_data)
@@ -177,7 +237,7 @@ static lcd_button_t debounce_button(int32_t adc_value, lcd_button_t *last_stable
     uint32_t now = k_uptime_get_32();
 
     /* First, verify the ADC value is within valid overall range */
-    if (adc_value < 0 || adc_value > 4095) {
+    if (adc_value < 0 || adc_value > 1023) {
         /* Invalid ADC reading - reject it */
         return *last_stable_button;
     }
@@ -234,6 +294,46 @@ int await_host() {
     return -1;
 }
 
+static int32_t read_adc_channel(const struct adc_dt_spec *channel, struct adc_sequence *sequence) {
+    int ret;
+
+    /* Initialize the sequence for this channel */
+    ret = adc_sequence_init_dt(channel, sequence);
+    if (ret < 0) {
+        LOG_ERR("Could not initialize ADC sequence: %d", ret);
+        return -1;
+    }
+
+    /* Read the ADC value */
+    ret = adc_read_dt(channel, sequence);
+    if (ret < 0) {
+        LOG_ERR("Could not read ADC: %d", ret);
+        return -1;
+    }
+
+    /* Return the raw ADC value */
+    if (sequence->buffer == &button_adc_buf) {
+        return (int32_t)button_adc_buf;
+    } else if (sequence->buffer == &temp_adc_buf) {
+        return (int32_t)temp_adc_buf;
+    }
+
+    return -1;
+}
+
+/* Configure ADC for button input (A0) */
+static int configure_adc_for_button(void) {
+    /* Explicitly reconfigure the ADC for the button channel */
+    return adc_channel_setup_dt(&button_adc_channel);
+}
+
+/* Configure ADC for temperature input (A4) */
+static int configure_adc_for_temp(void) {
+    /* Explicitly reconfigure the ADC for the temperature channel */
+    return adc_channel_setup_dt(&temp_adc_channel);
+}
+
+
 int main(void)
 {
     uint8_t byte;
@@ -242,7 +342,6 @@ int main(void)
     lcd_button_t last_button = BUTTON_NONE;
     lcd_button_t stable_button = BUTTON_NONE;  // For debouncing
     bool diagnostic_mode = false;  // Set to true to show raw ADC values
-
 #ifdef DEBUGMODE
     if (!device_is_ready(uart_dev)) {
         LOG_ERR("UART device (SERCOM5) not ready");
@@ -274,32 +373,16 @@ int main(void)
         return -1;
     }
 
-    /* Check if ADC controller is ready */
-    if (!adc_is_ready_dt(&adc_channel)) {
-        LOG_ERR("ADC controller device %s not ready", adc_channel.dev->name);
-        return -1;
+    ret = init_adc();
+    if (ret != 0) {
+        LOG_ERR("Failed to initialize ADC: %d", ret);
     }
 
-    /* Setup ADC channel */
-    ret = adc_channel_setup_dt(&adc_channel);
-    if (ret < 0) {
-        LOG_ERR("Could not setup channel #%d (%d)", adc_channel.channel_id, ret);
-        return -1;
-    }
-
-    /* Define ADC sequence for sampling */
-    int16_t adc_buf;
-    struct adc_sequence sequence = {
-        .buffer = &adc_buf,
-        .buffer_size = sizeof(adc_buf),
-    };
-
-    /* Initialize ADC sequence */
-    ret = adc_sequence_init_dt(&adc_channel, &sequence);
-    if (ret < 0) {
-        LOG_ERR("Could not initialize sequence (%d)", ret);
-        return -1;
-    }
+    // LOG_INF("Testing ADC channels...");
+    // while (1) {
+    //     test_adc_channels();
+    //     k_msleep(10);
+    // }
 
     k_msleep(1000);  // Show initial message for 1 second
 
@@ -318,13 +401,8 @@ int main(void)
     /* Main loop */
     while (1) {
         /* Read ADC value */
-        (void)adc_sequence_init_dt(&adc_channel, &sequence);
-        int err = adc_read_dt(&adc_channel, &sequence);
-        if (err < 0) {
-            LOG_ERR("Could not read ADC (%d)", ret);
-            k_msleep(100);
-            continue;
-        }
+        configure_adc_for_button();
+        int32_t raw_value = read_adc_channel(&button_adc_channel, &button_sequence);
 
         /* If there's data in the ring buffer, process it */
         if (ring_buf_get(&cdc_rx_rb, &byte, 1)) {
@@ -339,13 +417,12 @@ int main(void)
             }
         }
 
+        if (gpio_pin_get(porta, btn_pin)) {
+            LOG_INF("Button pin pressed");
+        }
 
-        /* Get raw ADC value */
-        int32_t raw_value;
-        raw_value = (int32_t)adc_buf;
         /* Get button state with debouncing */
         current_button = debounce_button(raw_value, &stable_button);
-
 
         if (current_button != last_button && current_button != BUTTON_NONE) {
             last_button = current_button;
@@ -364,7 +441,28 @@ int main(void)
             send_message(cdc_dev, cmd);
             lcd_clear(&lcd);
             ring_buf_reset(&cdc_rx_rb);
-            // LOG_INF("Button: %s, ADC: %d", button_name(current_button), raw_value);
+        }
+
+        /* Periodically read temperature (every 500ms or so) */
+        static uint32_t temp_counter = 0;
+        if (++temp_counter >= 50) {
+            temp_counter = 0;
+
+            /* Configure and read temperature ADC */
+            configure_adc_for_temp();
+            int32_t temp_reading = read_adc_channel(&temp_adc_channel, &temp_sequence);
+
+            int err = adc_raw_to_millivolts_dt(&temp_adc_channel, &temp_reading);
+
+            // temp_reading = ((temp_reading / 10.0) * (9.0/5.0)) + 32;
+
+            /* Process temperature reading as needed */
+            LOG_INF("Temperature ADC: %dF", temp_reading);
+
+            /* Re-configure for button reading before continuing */
+            configure_adc_for_button();
+            temp_reading = read_adc_channel(&button_adc_channel, &button_sequence);
+            LOG_INF("ADC Value: %dF", temp_reading);
         }
 
         /* Small delay for button sampling */

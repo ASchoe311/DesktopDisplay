@@ -47,8 +47,9 @@ void send_message(const struct device *uart_dev, uint8_t *data) {
     LOG_INF("Sending message");
 
     for(size_t i = 0; i <= data[1] + 2; i++) {
-      LOG_INF("Sending %02x", data[i]);
-      uart_poll_out(uart_dev, data[i]);
+        LOG_INF("Sending %02x", data[i]);
+        uart_poll_out(uart_dev, data[i]);
+        k_busy_wait(100);
     }
 }
 
@@ -121,7 +122,6 @@ bool dispatch_command(lcd_state_t *lcd, uint8_t *command) {
             break;
         case CLEAR_SCREEN_CMD:
             LOG_INF("Clearing screen");
-            LOG_DBG("Clearing screen");
             lcd_clear(lcd);
             break;
         case CLOSE_CONNECTION_CMD:
@@ -312,4 +312,23 @@ bool await_host_pc(struct ring_buf *buf, lcd_state_t *lcd, const struct device *
         k_msleep(500);
 	}
 	return false; // Should never be hit
+}
+
+void display_ambient_temperature(lcd_state_t *lcd, float temperature) {
+    lcd_clear(lcd);
+
+    // Display title
+    lcd_set_cursor(lcd, AMBIENT_TEMP_TITLE_ROW, AMBIENT_TEMP_TITLE_COL);
+    lcd_write_char(lcd, 0); // Thermometer icon
+    lcd_print(lcd, "Ambient Temp");
+
+    // Display temperature with thermometer icon
+    lcd_set_cursor(lcd, AMBIENT_TEMP_ROW, AMBIENT_TEMP_COL);
+
+    // Format temperature with 1 decimal place
+    char temp_str[12];
+    sprintf(temp_str, " %.1f C", temperature);
+    lcd_print(lcd, temp_str);
+
+    LOG_INF("Displayed ambient temperature: %.1f°C", temperature);
 }

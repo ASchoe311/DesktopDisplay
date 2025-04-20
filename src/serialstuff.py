@@ -240,6 +240,12 @@ def write_serial(ser, q):
                     write_logger.info(send_gpu_use(GPU, ser))
                     write_logger.info(send_gpu_fan_speed(GPU, ser))
                     write_logger.info(send_vram_use(GPU, ser))
+                case Displays.SELECT:
+                    # No need to send temperature data - Arduino handles it directly
+                    # Just wait for a new button press
+                    logger.info("On SELECT page - temperature handled by Arduino")
+                    while q.empty():
+                        time.sleep(1)  # Just wait for a new button press
                 case _:
                     write_logger.info(send_not_implemented_msg(disp, ser))
                     while q.empty():
